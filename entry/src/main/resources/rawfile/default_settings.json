@@ -33,6 +33,12 @@
       "value": "1"
       }
     ],
+    "user": [
+    {
+      "name": "lockscreen_sounds_enabled",
+      "value": "0"
+    }
+    ],
     "userSecure": [
     {
       "name": "user_setup_complete",
