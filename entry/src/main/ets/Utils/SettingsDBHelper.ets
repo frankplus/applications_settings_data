@@ -196,14 +196,17 @@ class SettingsDBHelper {
       return;
     }
     switch (tableType) {
+      // Awaited, so the first-startup flag is only written once every default
+      // is in: the provider is killed and restarted several times while the
+      // system boots, and a seed cut short must be retried next time.
       case TableType.SETTINGS:
-        this.loadDefaultTaleData(content.settings, TableType.SETTINGS, userId);
+        await this.loadDefaultTaleData(content.settings, TableType.SETTINGS, userId);
         return;
       case TableType.USER:
-        this.loadDefaultTaleData(content.user, TableType.USER, userId);
+        await this.loadDefaultTaleData(content.user, TableType.USER, userId);
         return;
       case TableType.USER_SECURE:
-        this.loadDefaultTaleData(content.userSecure, TableType.USER_SECURE, userId);
+        await this.loadDefaultTaleData(content.userSecure, TableType.USER_SECURE, userId);
         return;
       default:
         Log.error('invalid type');
@@ -227,6 +230,17 @@ class SettingsDBHelper {
     }
     Log.info(`tableName: ${tableName}, key: ${key}, value: ${value}`);
     try {
+      // A default never overrides or duplicates a key that is already there:
+      // a retried seed must be harmless, and a user's value must win.
+      let predicates = new relationalStore.RdbPredicates(tableName);
+      predicates.equalTo('KEYWORD', key);
+      let existing = await this.rdbStore.query(predicates, ['KEYWORD']);
+      let present = existing.rowCount > 0;
+      existing.close();
+      if (present) {
+        Log.info(`key ${key} already in ${tableName}, default not applied`);
+        return;
+      }
       let ret = await this.rdbStore.insert(tableName, { 'KEYWORD': key, 'VALUE': value });
       if (ret >= 0) {
         Log.info(`insert into DB success; ${ret}`);
@@ -313,7 +327,9 @@ class SettingsDBHelper {
     //make sure no faultoccured, then write isFirstStartup false;
     if (this.faultOccured === false) {
       let storage = await dataStorage.getPreferences(this.context as Context, SETTINGSDATA_PREFERENCE);
-      await storage.put('isFirstStartUp', false);
+      // Same key as the read in firstStartupConfig: with 'isFirstStartUp' the
+      // flag never stuck and every provider start re-inserted all defaults.
+      await storage.put('isFirstStartup', false);
       await storage.flush();
       Log.info('settingsdata initial DB success. ')
     } else {
@@ -323,8 +339,10 @@ class SettingsDBHelper {
   }
   private async loadDefaultTaleData(tableData: Array<Map<string, string>>, tableType: TableType,
                                     userID: number): Promise<void> {
-    if (tableData?.length <= 0) {
-      Log.error(`${tableType} table data is empty`);
+    if (!tableData || tableData.length <= 0) {
+      // No section for this table in default_settings.json (upstream ships
+      // only "settings"): nothing to seed, not a crash on .length.
+      Log.info(`${tableType} table data is empty`);
       return;
     }
     let tableName: string = this.getTableName(tableType, userID);
